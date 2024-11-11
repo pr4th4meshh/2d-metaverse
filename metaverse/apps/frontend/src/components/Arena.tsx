@@ -1,11 +1,34 @@
 import { useEffect, useRef, useState } from 'react';
 
+// Define types for user and WebSocket message
+interface User {
+  x: number;
+  y: number;
+  userId: string;
+}
+
+interface WebSocketMessage {
+  type: string;
+  payload: {
+    userId: string;
+    x: number;
+    y: number;
+    spawn?: { x: number; y: number };
+    users?: User[];
+    token?: string;
+    spaceId?: string;
+  };
+}
+
 const Arena = () => {
-  const canvasRef = useRef<any>(null);
-  const wsRef = useRef<any>(null);
-  const [currentUser, setCurrentUser] = useState<any>({});
-  const [users, setUsers] = useState(new Map());
-  const [params, setParams] = useState({ token: '', spaceId: '' });
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [users, setUsers] = useState<Map<string, User>>(new Map());
+  const [params, setParams] = useState<{ token: string; spaceId: string }>({
+    token: '',
+    spaceId: '',
+  });
 
   // Initialize WebSocket connection and handle URL params
   useEffect(() => {
@@ -16,20 +39,22 @@ const Arena = () => {
 
     // Initialize WebSocket
     wsRef.current = new WebSocket('ws://localhost:3001'); // Replace with your WS_URL
-    
+
     wsRef.current.onopen = () => {
       // Join the space once connected
-      wsRef.current.send(JSON.stringify({
-        type: 'join',
-        payload: {
-          spaceId,
-          token
-        }
-      }));
+      wsRef.current?.send(
+        JSON.stringify({
+          type: 'join',
+          payload: {
+            spaceId,
+            token,
+          },
+        })
+      );
     };
 
-    wsRef.current.onmessage = (event: any) => {
-      const message = JSON.parse(event.data);
+    wsRef.current.onmessage = (event: MessageEvent) => {
+      const message: WebSocketMessage = JSON.parse(event.data);
       handleWebSocketMessage(message);
     };
 
@@ -40,44 +65,38 @@ const Arena = () => {
     };
   }, []);
 
-  const handleWebSocketMessage = (message: any) => {
+  const handleWebSocketMessage = (message: WebSocketMessage) => {
     switch (message.type) {
       case 'space-joined':
         // Initialize current user position and other users
-        console.log("set")
-        console.log({
-            x: message.payload.spawn.x,
-            y: message.payload.spawn.y,
-            userId: message.payload.userId
-          })
         setCurrentUser({
-          x: message.payload.spawn.x,
-          y: message.payload.spawn.y,
-          userId: message.payload.userId
+          x: message.payload.spawn!.x,
+          y: message.payload.spawn!.y,
+          userId: message.payload.userId,
         });
-        
+
         // Initialize other users from the payload
-        const userMap = new Map();
-        message.payload.users.forEach((user: any) => {
+        const userMap = new Map<string, User>();
+        message.payload.users?.forEach((user) => {
           userMap.set(user.userId, user);
         });
         setUsers(userMap);
         break;
 
       case 'user-joined':
-        setUsers(prev => {
+        setUsers((prev) => {
           const newUsers = new Map(prev);
           newUsers.set(message.payload.userId, {
             x: message.payload.x,
             y: message.payload.y,
-            userId: message.payload.userId
+            userId: message.payload.userId,
           });
           return newUsers;
         });
         break;
 
       case 'movement':
-        setUsers(prev => {
+        setUsers((prev) => {
           const newUsers = new Map(prev);
           const user = newUsers.get(message.payload.userId);
           if (user) {
@@ -91,15 +110,15 @@ const Arena = () => {
 
       case 'movement-rejected':
         // Reset current user position if movement was rejected
-        setCurrentUser((prev: any) => ({
-          ...prev,
+        setCurrentUser((prev) => ({
+          ...prev!,
           x: message.payload.x,
-          y: message.payload.y
+          y: message.payload.y,
         }));
         break;
 
       case 'user-left':
-        setUsers(prev => {
+        setUsers((prev) => {
           const newUsers = new Map(prev);
           newUsers.delete(message.payload.userId);
           return newUsers;
@@ -109,28 +128,30 @@ const Arena = () => {
   };
 
   // Handle user movement
-  const handleMove = (newX: any, newY: any) => {
+  const handleMove = (newX: number, newY: number) => {
     if (!currentUser) return;
-    
+
     // Send movement request
-    wsRef.current.send(JSON.stringify({
-      type: 'move',
-      payload: {
-        x: newX,
-        y: newY,
-        userId: currentUser.userId
-      }
-    }));
+    wsRef.current?.send(
+      JSON.stringify({
+        type: 'move',
+        payload: {
+          x: newX,
+          y: newY,
+          userId: currentUser.userId,
+        },
+      })
+    );
   };
 
   // Draw the arena
   useEffect(() => {
-    console.log("render")
     const canvas = canvasRef.current;
     if (!canvas) return;
-    console.log("below render")
-    
+
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Draw grid
@@ -148,12 +169,8 @@ const Arena = () => {
       ctx.stroke();
     }
 
-    console.log("before curerntusert")
-    console.log(currentUser)
     // Draw current user
-    if (currentUser && currentUser.x) {
-        console.log("drawing myself")
-        console.log(currentUser)
+    if (currentUser) {
       ctx.beginPath();
       ctx.fillStyle = '#FF6B6B';
       ctx.arc(currentUser.x * 50, currentUser.y * 50, 20, 0, Math.PI * 2);
@@ -165,12 +182,7 @@ const Arena = () => {
     }
 
     // Draw other users
-    users.forEach(user => {
-    if (!user.x) {
-        return
-    }
-    console.log("drawing other user")
-    console.log(user)
+    users.forEach((user) => {
       ctx.beginPath();
       ctx.fillStyle = '#4ECDC4';
       ctx.arc(user.x * 50, user.y * 50, 20, 0, Math.PI * 2);
@@ -182,7 +194,7 @@ const Arena = () => {
     });
   }, [currentUser, users]);
 
-  const handleKeyDown = (e: any) => {
+  const handleKeyDown = (e: KeyboardEvent) => {
     if (!currentUser) return;
 
     const { x, y } = currentUser;
@@ -204,21 +216,16 @@ const Arena = () => {
 
   return (
     <div className="p-4" onKeyDown={handleKeyDown} tabIndex={0}>
-        <h1 className="text-2xl font-bold mb-4">Arena</h1>
-        <div className="mb-4">
-          <p className="text-sm text-gray-600">Token: {params.token}</p>
-          <p className="text-sm text-gray-600">Space ID: {params.spaceId}</p>
-          <p className="text-sm text-gray-600">Connected Users: {users.size + (currentUser ? 1 : 0)}</p>
-        </div>
-        <div className="border rounded-lg overflow-hidden">
-          <canvas
-            ref={canvasRef}
-            width={2000}
-            height={2000}
-            className="bg-white"
-          />
-        </div>
-        <p className="mt-2 text-sm text-gray-500">Use arrow keys to move your avatar</p>
+      <h1 className="text-2xl font-bold mb-4">Metaverse</h1>
+      <div className="mb-4">
+        <p className="text-sm text-gray-600">Token: {params.token}</p>
+        <p className="text-sm text-gray-600">Space ID: {params.spaceId}</p>
+        <p className="text-sm text-gray-600">Connected Users: {users.size + (currentUser ? 1 : 0)}</p>
+      </div>
+      <div className="border rounded-lg overflow-hidden">
+        <canvas ref={canvasRef} width={1000} height={1000} className="bg-white" />
+      </div>
+      <p className="mt-2 text-sm text-gray-500">Use arrow keys to move your avatar</p>
     </div>
   );
 };
